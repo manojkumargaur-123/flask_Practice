@@ -8,13 +8,20 @@ import os
 # Load env vars
 load_dotenv()
 
-app = Flask(__name__)
-app.config["MONGO_URI"] = os.getenv("MONGO_URI")
-app.secret_key = os.getenv("SECRET_KEY")
+mongo = PyMongo()
 
-# Use certifi CA bundle explicitly for cross-platform TLS reliability
-# (notably fixes common macOS certificate verification failures).
-mongo = PyMongo(app, tlsCAFile=certifi.where())
+def create_app():
+    app = Flask(__name__)
+
+    app.config["MONGO_URI"] = os.getenv("MONGO_URI")
+    app.secret_key = os.getenv("SECRET_KEY")
+
+    # Initialize MongoDB
+    mongo.init_app(app, tlsCAFile=certifi.where())
+
+    return app
+
+app = create_app()
 
 # Home page -> list students
 @app.route('/')
