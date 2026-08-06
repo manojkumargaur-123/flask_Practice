@@ -32,9 +32,15 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Unit Tests
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
         run: |
           pytest -v
 
       - name: Build Docker Image
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
         run: |
           docker build -t flask-student-app .
