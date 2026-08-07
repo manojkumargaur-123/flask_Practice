@@ -62,5 +62,3 @@ def test_delete_student(client):
     assert response.status_code == 200
     assert b"Temp User" not in response.data
     
-def test_intentional_failure():
-    assert False
