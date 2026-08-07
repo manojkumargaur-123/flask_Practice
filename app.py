@@ -74,5 +74,21 @@ def delete_student(student_id):
     return redirect(url_for("index"))
 
 
+# Health Check Endpoint (Required for CI/CD Assignment)
+@app.route("/health")
+def health():
+    try:
+        mongo.db.command("ping")
+        return {
+            "status": "UP",
+            "database": "MongoDB Connected"
+        }, 200
+    except Exception as e:
+        return {
+            "status": "DOWN",
+            "error": str(e)
+        }, 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

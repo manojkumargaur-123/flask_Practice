@@ -2,15 +2,13 @@ name: Flask CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
-
-  pull_request:
-    branches: [main]
+    branches:
+      - main
 
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  build-test-docker:
 
     runs-on: ubuntu-latest
 
@@ -25,7 +23,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -36,10 +34,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Wait for MongoDB
-        run: |
-          sleep 10
+        run: sleep 10
 
-      - name: Run Unit Tests
+      - name: Run Tests
         env:
           MONGO_URI: mongodb://localhost:27017/test_student_db
           SECRET_KEY: test-secret
@@ -48,4 +45,93 @@ jobs:
 
       - name: Build Docker Image
         run: |
-          docker build -t flask-student-app .
+          docker build -t flask-student-app:${{ github.sha }} .
+          
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag Docker Image
+        run: |
+          docker tag flask-student-app:${{ github.sha }} \
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+
+          docker tag flask-student-app:${{ github.sha }} \
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+
+      - name: Push Docker Image to ECR
+        run: |
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+      
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+
+            sudo docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+
+            sudo docker stop flask-app || true
+            sudo docker rm flask-app || true
+
+            sudo docker run -d \
+              --name flask-app \
+              -p 5000:5000 \
+              --restart unless-stopped \
+              --env-file /home/ec2-user/.env \
+              ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+
+            sleep 15
+
+            curl -f http://localhost:5000/health
+
+      - name: Send Success Email
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "✅ CI/CD Pipeline Successful"
+          to: m86gaur@gmail.com
+          from: ${{ secrets.EMAIL_USERNAME }}
+          body: |
+            Deployment Successful
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+
+      - name: Send Failure Email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ CI/CD Pipeline Failed"
+          to: m86gaur@gmail.com
+          from: ${{ secrets.EMAIL_USERNAME }}
+          body: |
+            Deployment Failed
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+
+            Please check GitHub Actions logs.
